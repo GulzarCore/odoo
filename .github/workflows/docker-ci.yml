@@ -168,3 +168,5 @@ jobs:
             --format '{{.Config.Image}}'
 
           echo "Deployment successful."
+
+          EOF
