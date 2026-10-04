@@ -91,82 +91,33 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Configure SSH
-        env:
-          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
-          EC2_KNOWN_HOSTS: ${{ secrets.EC2_KNOWN_HOSTS }}
         run: |
           mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
 
-          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/odoo-deploy
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/odoo-deploy
           chmod 600 ~/.ssh/odoo-deploy
 
-          printf '%s\n' "$EC2_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          echo "${{ secrets.EC2_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
-      - name: Deploy to EC2
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
+      - name: Test SSH connection
         run: |
           ssh \
             -i ~/.ssh/odoo-deploy \
+            -o StrictHostKeyChecking=yes \
             -o BatchMode=yes \
-            "$EC2_USER@$EC2_HOST" << 'EOF'
+            ubuntu@13.233.229.141 \
+            "echo SSH connection successful"
 
-          set -e
-
-          cd ~/odoo2/devops
-
-          echo "Current image:"
-          docker inspect odoo \
-            --format '{{.Config.Image}}' || true
-
-          echo "Pulling latest Odoo image..."
-          docker compose pull odoo
-
-          echo "Deploying Odoo..."
-          docker compose up -d --no-build odoo
-
-          echo "Waiting for Odoo health..."
-
-          for i in $(seq 1 30); do
-
-              STATUS=$(docker inspect \
-                --format '{{.State.Health.Status}}' \
-                odoo 2>/dev/null || echo "starting")
-
-              echo "Health: $STATUS"
-
-              if [ "$STATUS" = "healthy" ]; then
-                  echo "Odoo is healthy."
-                  break
-              fi
-
-              if [ "$STATUS" = "unhealthy" ]; then
-                  echo "Odoo is unhealthy."
-                  docker compose logs --tail=100 odoo
-                  exit 1
-              fi
-
-              if [ "$i" -eq 30 ]; then
-                  echo "Odoo health check timed out."
-                  docker compose logs --tail=100 odoo
-                  exit 1
-              fi
-
-              sleep 5
-          done
-
-          echo "Running containers:"
-          docker compose ps
-
-          echo "Deployed image:"
-          docker inspect odoo \
-            --format '{{.Config.Image}}'
-
-          echo "Deployment successful."
-
-          EOF
+      - name: Deploy to EC2
+        run: |
+          ssh \
+            -i ~/.ssh/odoo-deploy \
+            -o StrictHostKeyChecking=yes \
+            -o BatchMode=yes \
+            ubuntu@13.233.229.141 \
+            'cd ~/odoo2/devops && \
+            docker compose pull odoo && \
+            docker compose up -d --no-build odoo && \
+            docker compose ps'
