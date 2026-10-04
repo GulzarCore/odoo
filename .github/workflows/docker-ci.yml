@@ -45,7 +45,9 @@ jobs:
         with:
           context: .
           file: ./devops/Dockerfile
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: |
+            odoo-devops:test
+            ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           load: true
           cache-from: type=gha
