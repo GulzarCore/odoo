@@ -17,26 +17,31 @@ services:
       retries: 10
 
   odoo:
-    build:
-      context: ..
-      dockerfile: devops/Dockerfile
+    image: ghcr.io/YOUR_GITHUB_USERNAME/odoo-devops:18.0
     container_name: odoo
+
     depends_on:
       db:
         condition: service_healthy
-    volumes:
-      - odoo_data:/var/lib/odoo
-      - ./odoo.conf:/etc/odoo/odoo.conf:ro
+
     expose:
       - "8069"
       - "8072"
-    restart: unless-stopped
+
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8069/web/database/selector', timeout=5)\""]
-      interval: 10s
+      test:
+        - CMD-SHELL
+        - python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8069/web/database/selector', timeout=5)"
       timeout: 5s
+      interval: 10s
       retries: 12
       start_period: 30s
+
+    restart: unless-stopped
+
+    volumes:
+      - odoo_data:/var/lib/odoo
+      - ./odoo.conf:/etc/odoo/odoo.conf:ro
 
   nginx:
     image: nginx:alpine
