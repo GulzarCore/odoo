@@ -17,7 +17,7 @@ services:
       retries: 10
 
   odoo:
-    image: ghcr.io/YOUR_GITHUB_USERNAME/odoo-devops:18.0
+    image: ghcr.io/gulzarcore/odoo-devops:18.0
     container_name: odoo
 
     depends_on:
