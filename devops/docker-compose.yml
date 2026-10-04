@@ -31,7 +31,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8069/web/database/selector', timeout=5)"
+        - python3 -c "import urllib.request; urllib.request.urlopen('http://13.233.229.141:8069/web/database/selector', timeout=5)"
       timeout: 5s
       interval: 10s
       retries: 12
