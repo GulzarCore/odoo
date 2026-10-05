@@ -92,25 +92,18 @@ jobs:
 
     steps:
       - name: Configure SSH
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
         run: |
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
 
-          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/odoo-deploy
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/odoo-deploy
           chmod 600 ~/.ssh/odoo-deploy
 
-          echo "${{ secrets.EC2_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
-          chmod 644 ~/.ssh/known_hosts
+          ssh-keyscan -H 13.233.229.141 >> ~/.ssh/known_hosts
 
-      - name: Test SSH connection
-        run: |
-          ssh \
-            -i ~/.ssh/odoo-deploy \
-            -o StrictHostKeyChecking=yes \
-            -o BatchMode=yes \
-            ubuntu@13.233.229.141 \
-            "echo SSH connection successful"
-
-      - name: Deploy to EC2
+      - name: Test SSH
         run: |
           ssh \
             -o IdentitiesOnly=yes \
@@ -119,3 +112,16 @@ jobs:
             -i ~/.ssh/odoo-deploy \
             ubuntu@13.233.229.141 \
             "echo SSH OK"
+
+      - name: Deploy
+        run: |
+          ssh \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o BatchMode=yes \
+            -i ~/.ssh/odoo-deploy \
+            ubuntu@13.233.229.141 \
+            'cd ~/odoo2/devops && \
+             docker compose pull odoo && \
+             docker compose up -d --no-build odoo && \
+             docker compose ps'
