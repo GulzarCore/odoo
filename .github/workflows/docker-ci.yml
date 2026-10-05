@@ -113,11 +113,9 @@ jobs:
       - name: Deploy to EC2
         run: |
           ssh \
-            -i ~/.ssh/odoo-deploy \
+            -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
             -o BatchMode=yes \
+            -i ~/.ssh/odoo-deploy \
             ubuntu@13.233.229.141 \
-            'cd ~/odoo2/devops && \
-            docker compose pull odoo && \
-            docker compose up -d --no-build odoo && \
-            docker compose ps'
+            "echo SSH OK"
