@@ -162,4 +162,4 @@ jobs:
               echo "Staging health check failed."
               docker compose -f devops/docker-compose.staging.yml ps
               exit 1
-REMOTE
+
