@@ -84,55 +84,19 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-    deploy:
-      name: Deploy to EC2
-      needs: build-test
-      if: github.event_name == 'push' && needs.build-test.result == 'success'
-      runs-on: self-hosted
-
-      steps:
-        - name: Deploy Odoo
-          run: |
-            cd ~/odoo2/devops
-
-            docker compose pull odoo
-
-            docker compose up -d --no-build odoo
-
-            docker compose ps
+  deploy:
+    name: Deploy to EC2
+    needs: build-test
+    if: github.event_name == 'push' && needs.build-test.result == 'success'
+    runs-on: self-hosted
 
     steps:
-      - name: Configure SSH key
-        env:
-          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+      - name: Deploy Odoo
         run: |
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
+          cd ~/odoo2/devops
 
-          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/odoo-deploy
-          chmod 600 ~/.ssh/odoo-deploy
+          docker compose pull odoo
 
-          ssh-keyscan -H 13.233.229.141 >> ~/.ssh/known_hosts
+          docker compose up -d --no-build odoo
 
-      - name: Test SSH
-        run: |
-          ssh \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=yes \
-            -o BatchMode=yes \
-            -i ~/.ssh/odoo-deploy \
-            ubuntu@13.233.229.141 \
-            "echo SSH OK"
-
-      - name: Deploy
-        run: |
-          ssh \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=yes \
-            -o BatchMode=yes \
-            -i ~/.ssh/odoo-deploy \
-            ubuntu@13.233.229.141 \
-            'cd ~/odoo2/devops && \
-             docker compose pull odoo && \
-             docker compose up -d --no-build odoo && \
-             docker compose ps'
+          docker compose ps
