@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - 18.0
-
   pull_request:
     branches:
       - 18.0
@@ -25,9 +24,6 @@ jobs:
   ci:
     name: Code Quality, Test and Build
     runs-on: ubuntu-latest
-
-    outputs:
-      image_tag: ${{ steps.meta.outputs.version }}
 
     steps:
       - name: Checkout
@@ -98,42 +94,100 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-
   staging:
     name: Deploy to Staging
     needs: ci
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && needs.ci.result == 'success'
     runs-on: ubuntu-latest
 
     steps:
-      - name: Create SSH configuration
+      - name: Validate deployment secrets
         env:
-          SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+          STAGING_SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+        run: |
+          if [ -z "$STAGING_HOST" ]; then
+            echo "ERROR: STAGING_HOST is empty"
+            exit 1
+          fi
+
+          if [ -z "$STAGING_SSH_KEY" ]; then
+            echo "ERROR: STAGING_SSH_KEY is empty"
+            exit 1
+          fi
+
+          if [ -z "$GHCR_USERNAME" ]; then
+            echo "ERROR: GHCR_USERNAME is empty"
+            exit 1
+          fi
+
+          if [ -z "$GHCR_READ_TOKEN" ]; then
+            echo "ERROR: GHCR_READ_TOKEN is empty"
+            exit 1
+          fi
+
+          echo "All deployment secrets are present."
+          echo "Staging host: $STAGING_HOST"
+          echo "GHCR username: $GHCR_USERNAME"
+
+      - name: Configure SSH
+        env:
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+          STAGING_SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
+        run: |
+          SSH_DIR="$RUNNER_TEMP/ssh"
+
+          mkdir -p "$SSH_DIR"
+          chmod 700 "$SSH_DIR"
+
+          printf '%s\n' "$STAGING_SSH_KEY" > "$SSH_DIR/deploy_key"
+          chmod 600 "$SSH_DIR/deploy_key"
+
+          echo "Checking SSH key format..."
+
+          ssh-keygen -y \
+            -f "$SSH_DIR/deploy_key" \
+            > "$SSH_DIR/deploy_key.pub"
+
+          echo "SSH private key is valid."
+
+          echo "Adding EC2 host key..."
+
+          ssh-keyscan \
+            -T 10 \
+            -H "$STAGING_HOST" \
+            > "$SSH_DIR/known_hosts"
+
+          if [ ! -s "$SSH_DIR/known_hosts" ]; then
+            echo "ERROR: Could not obtain EC2 SSH host key."
+            exit 1
+          fi
+
+          chmod 600 "$SSH_DIR/known_hosts"
+
+          echo "SSH configuration completed."
+
+      - name: Test SSH connection
+        env:
           STAGING_HOST: ${{ secrets.STAGING_HOST }}
         run: |
-          set -e
+          ssh \
+            -i "$RUNNER_TEMP/ssh/deploy_key" \
+            -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts" \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=10 \
+            ubuntu@"$STAGING_HOST" \
+            "echo 'SSH connection to EC2: OK'"
 
-          mkdir -p "$RUNNER_TEMP/ssh"
-
-          printf '%s\n' "$SSH_KEY" \
-            > "$RUNNER_TEMP/ssh/deploy_key"
-
-          chmod 600 "$RUNNER_TEMP/ssh/deploy_key"
-
-          ssh-keyscan -H "$STAGING_HOST" \
-            > "$RUNNER_TEMP/ssh/known_hosts"
-
-          chmod 600 "$RUNNER_TEMP/ssh/known_hosts"
-
-      - name: Deploy staging
+      - name: Deploy to Staging
         env:
           STAGING_HOST: ${{ secrets.STAGING_HOST }}
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
           GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-          IMAGE: ghcr.io/gulzarcore/odoo-devops:sha-${{ github.sha }}
+          IMAGE: ${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
         run: |
-          set -e
-
           ssh \
             -i "$RUNNER_TEMP/ssh/deploy_key" \
             -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts" \
@@ -145,11 +199,18 @@ jobs:
 
           cd ~/odoo2
 
+          echo "Logging into GHCR..."
+
           echo "$GHCR_READ_TOKEN" | docker login ghcr.io \
             --username "$GHCR_USERNAME" \
             --password-stdin
 
+          echo "Pulling image:"
+          echo "$IMAGE"
+
           docker pull "$IMAGE"
+
+          echo "Starting staging..."
 
           ODOO_IMAGE="$IMAGE" \
             docker compose \
@@ -164,7 +225,7 @@ jobs:
               --format '{{.State.Health.Status}}' \
               odoo-staging 2>/dev/null || true)
 
-            echo "Health: $STATUS"
+            echo "Health check $i/30: $STATUS"
 
             if [ "$STATUS" = "healthy" ]; then
               echo "Staging deployment successful."
@@ -174,7 +235,7 @@ jobs:
             sleep 5
           done
 
-          echo "Staging health check failed."
+          echo "ERROR: Staging health check failed."
 
           docker compose \
             -f devops/docker-compose.staging.yml \
