@@ -84,11 +84,22 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  deploy:
-    name: Deploy to EC2
-    needs: build-test
-    if: github.event_name == 'push' && needs.build-test.result == 'success'
-    runs-on: ubuntu-latest
+    deploy:
+      name: Deploy to EC2
+      needs: build-test
+      if: github.event_name == 'push' && needs.build-test.result == 'success'
+      runs-on: self-hosted
+
+      steps:
+        - name: Deploy Odoo
+          run: |
+            cd ~/odoo2/devops
+
+            docker compose pull odoo
+
+            docker compose up -d --no-build odoo
+
+            docker compose ps
 
     steps:
       - name: Configure SSH key
