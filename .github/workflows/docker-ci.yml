@@ -1,4 +1,4 @@
-name: Odoo CI/CD
+name: Odoo CI
 
 on:
   push:
@@ -14,29 +14,29 @@ permissions:
   packages: write
 
 concurrency:
-  group: production-deployment
-  cancel-in-progress: false
+  group: odoo-ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-
-  build-test:
-    name: Build and Test
+  ci:
+    name: Code Quality, Test and Build
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Code Quality - Python syntax
+        run: |
+          python -m compileall -q odoo addons
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
-
-      - name: Log in to GHCR
-        if: github.event_name == 'push'
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker metadata
         id: meta
@@ -52,15 +52,12 @@ jobs:
         with:
           context: .
           file: ./devops/Dockerfile
-          tags: |
-            odoo-devops:test
-            ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: odoo-devops:test
           load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Test Odoo image
+      - name: Test Odoo import
         run: |
           docker run --rm \
             odoo-devops:test \
@@ -71,6 +68,14 @@ jobs:
           docker run --rm \
             odoo-devops:test \
             python3 odoo-bin --version
+
+      - name: Login to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push Docker image to GHCR
         if: github.event_name == 'push'
@@ -83,20 +88,3 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  deploy:
-    name: Deploy to EC2
-    needs: build-test
-    if: github.event_name == 'push' && needs.build-test.result == 'success'
-    runs-on: self-hosted
-
-    steps:
-      - name: Deploy Odoo
-        run: |
-          cd ~/odoo2/devops
-
-          docker compose pull odoo
-
-          docker compose up -d --no-build odoo
-
-          docker compose ps
