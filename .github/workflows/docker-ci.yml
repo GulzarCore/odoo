@@ -1,3 +1,4 @@
+
 name: Odoo CI/CD
 
 on:
@@ -22,9 +23,6 @@ jobs:
   ci:
     name: Code Quality, Test and Build
     runs-on: ubuntu-latest
-
-    outputs:
-      image_tag: ${{ steps.meta.outputs.version }}
 
     steps:
       - name: Checkout
@@ -88,10 +86,13 @@ jobs:
           context: .
           file: ./devops/Dockerfile
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/odoo-devops:18.0
+            ghcr.io/${{ github.repository_owner }}/odoo-devops:sha-${{ github.sha }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
 
   staging:
     name: Deploy to Staging
@@ -105,61 +106,78 @@ jobs:
           SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
           STAGING_HOST: ${{ secrets.STAGING_HOST }}
         run: |
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
+          set -e
 
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
+          SSH_DIR="$RUNNER_TEMP/ssh"
+          mkdir -p "$SSH_DIR"
+          chmod 700 "$SSH_DIR"
 
-          ssh-keyscan -H "$STAGING_HOST" >> ~/.ssh/known_hosts
+          printf '%s\n' "$SSH_KEY" > "$SSH_DIR/deploy_key"
+          chmod 600 "$SSH_DIR/deploy_key"
+
+          ssh-keyscan -H "$STAGING_HOST" > "$SSH_DIR/known_hosts"
+          chmod 600 "$SSH_DIR/known_hosts"
+
+          echo "SSH configuration completed."
 
       - name: Deploy to Staging
         env:
           STAGING_HOST: ${{ secrets.STAGING_HOST }}
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
           GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-          IMAGE_TAG: ${{ needs.ci.outputs.image_tag }}
+          SSH_DIR: ${{ runner.temp }}/ssh
+          IMAGE: ghcr.io/${{ github.repository_owner }}/odoo-devops:sha-${{ github.sha }}
         run: |
-          IMAGE="ghcr.io/${{ github.repository_owner }}/odoo-devops:${IMAGE_TAG}"
+          set -e
+
+          echo "Deploying:"
+          echo "$IMAGE"
 
           ssh \
-            -i ~/.ssh/deploy_key \
+            -i "$SSH_DIR/deploy_key" \
+            -o UserKnownHostsFile="$SSH_DIR/known_hosts" \
+            -o StrictHostKeyChecking=yes \
             ubuntu@"$STAGING_HOST" \
-            "export IMAGE='$IMAGE' GHCR_USERNAME='$GHCR_USERNAME' GHCR_READ_TOKEN='$GHCR_READ_TOKEN'; bash -s" <<'REMOTE'
+            "IMAGE='$IMAGE' GHCR_USERNAME='$GHCR_USERNAME' GHCR_READ_TOKEN='$GHCR_READ_TOKEN' bash -s" <<'REMOTE'
               set -e
 
               cd ~/odoo2
 
-              git fetch origin 18.0
-              git checkout 18.0
-              git reset --hard origin/18.0
-
               echo "$GHCR_READ_TOKEN" | docker login ghcr.io \
-                -u "$GHCR_USERNAME" \
+                --username "$GHCR_USERNAME" \
                 --password-stdin
 
-              cd ~/odoo2
+              docker pull "$IMAGE"
 
               ODOO_IMAGE="$IMAGE" \
-                docker compose -f devops/docker-compose.staging.yml pull
+                docker compose \
+                -f devops/docker-compose.staging.yml \
+                up -d
 
-              ODOO_IMAGE="$IMAGE" \
-                docker compose -f devops/docker-compose.staging.yml up -d
+              echo "Waiting for staging health..."
 
-              echo "Waiting for Staging Odoo..."
-
-              for i in {1..30}; do
-                if docker inspect \
+              for i in $(seq 1 30); do
+                STATUS=$(docker inspect \
                   --format '{{.State.Health.Status}}' \
-                  odoo-staging 2>/dev/null | grep -q healthy; then
-                  echo "Staging Odoo is healthy."
+                  odoo-staging 2>/dev/null || true)
+
+                echo "Health: $STATUS"
+
+                if [ "$STATUS" = "healthy" ]; then
+                  echo "Staging deployment successful."
                   exit 0
                 fi
 
                 sleep 5
               done
 
-              echo "Staging health check failed."
-              docker compose -f devops/docker-compose.staging.yml ps
-              exit 1
+              echo "Staging deployment failed."
 
+              docker compose \
+                -f devops/docker-compose.staging.yml \
+                ps
+
+              docker logs --tail 100 odoo-staging || true
+
+              exit 1
+REMOTE 
